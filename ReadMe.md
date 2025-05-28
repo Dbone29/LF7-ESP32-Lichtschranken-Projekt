@@ -49,9 +49,9 @@ HC-SR04 Ultraschallsensor:
 └── Echo → GPIO 18
 
 Ampel LEDs:
-├── Rot → GPIO 25 (+ 220Ω Vorwiderstand)
-├── Gelb → GPIO 26 (+ 220Ω Vorwiderstand)
-├── Grün → GPIO 27 (+ 220Ω Vorwiderstand)
+├── Rot → GPIO 25
+├── Gelb → GPIO 26
+├── Grün → GPIO 27
 └── Alle GND → GND
 ```
 
@@ -94,8 +94,8 @@ Installieren Sie folgende Libraries über den Arduino IDE Library Manager:
 # In Arduino IDE: File → Preferences → Additional Board Manager URLs:
 # https://dl.espressif.com/dl/package_esp32_index.json
 
-# Board auswählen: ESP32 Dev Module
-# Upload Speed: 921600
+# Board auswählen: ESP32 Wrover Module
+# Upload Speed: 115200
 # Flash Mode: QIO
 ```
 
