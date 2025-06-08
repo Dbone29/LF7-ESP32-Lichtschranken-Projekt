@@ -84,7 +84,6 @@ Installieren Sie folgende Libraries über den Arduino IDE Library Manager:
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <WiFiAP.h>
-#include <esp_task_wdt.h>  // Watchdog Timer
 #include <SPIFFS.h>        // Datenlogging
 ```
 
@@ -191,7 +190,6 @@ void setup() {
 - **Timeout-Schutz** bei hängenden Messungen
 - **Fehlerbehandlung** mit automatischer Wiederherstellung
 - **Live-Zeitanzeige** während der Messung
-- **Watchdog Timer** verhindert System-Hänger (10 Sekunden)
 - **Median-Filter** für robustere Sensor-Messungen
 - **Heartbeat-System** für Verbindungsüberwachung (5 Sekunden Intervall)
 - **Statistik-Tracking** mit Min/Max/Durchschnitt

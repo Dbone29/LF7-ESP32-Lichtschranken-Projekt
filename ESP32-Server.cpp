@@ -3,8 +3,8 @@
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <WiFiAP.h>
-#include <esp_task_wdt.h>
 #include <SPIFFS.h>
+
 
 // WiFi AP Settings
 const char *ssid = "MeinESP32AP";
@@ -120,9 +120,6 @@ void setup()
     Serial.begin(115200);
     delay(100);
 
-    // Watchdog Timer initialisieren (10 Sekunden)
-    esp_task_wdt_init(10, true);
-    esp_task_wdt_add(NULL);
 
     // SPIFFS initialisieren
     initSPIFFS();
@@ -353,8 +350,6 @@ void printSystemStatus()
 
 void loop()
 {
-    // Watchdog zurücksetzen
-    esp_task_wdt_reset();
     
     updateClientStatus();
     printSystemStatus();
@@ -510,20 +505,21 @@ void handleClientCommunication()
 
             // Extrahiere Zeit falls vorhanden
             int colonIndex = clientData.indexOf(':');
+            unsigned long measuredTime = 0;
             if (colonIndex != -1)
             {
                 String timeValue = clientData.substring(colonIndex + 1);
                 Serial.print("ESP1: Gemessene Zeit: ");
                 Serial.print(timeValue);
                 Serial.println("ms");
+                
+                // Zeit in Statistik aufnehmen
+                measuredTime = timeValue.toInt();
+                stats.addMeasurement(measuredTime / 1000.0);
+                
+                // Messung in SPIFFS loggen
+                logMeasurement(measuredTime);
             }
-
-            // Zeit in Statistik aufnehmen
-            unsigned long measuredTime = timeValue.toInt();
-            stats.addMeasurement(measuredTime / 1000.0);
-            
-            // Messung in SPIFFS loggen
-            logMeasurement(measuredTime);
             
             timingInProgress = false; // Timing beendet
             currentState = WAITING_FOR_TIMING_COMPLETE;
