@@ -1,85 +1,98 @@
-# Hardware-Verkabelung für Lichtschranken-Projekt
+# Detaillierte Verkabelungsanleitung
 
-## ESP32 #1 (Server/Ampel)
-```
-HC-SR04 Ultraschallsensor:
-- VCC → 5V
-- GND → GND  
-- Trig → GPIO 5
-- Echo → GPIO 18
+## 🔌 ESP32 #1 (Server mit Ampel)
 
-Ampel LEDs:
-- Rot → GPIO 25 (+ Vorwiderstand 220Ω)
-- Gelb → GPIO 26 (+ Vorwiderstand 220Ω)  
-- Grün → GPIO 27 (+ Vorwiderstand 220Ω)
-- Alle GND → GND
-```
+### Ultraschallsensor HC-SR04
+| Sensor-Pin | ESP32-Pin | Farbe (Empfehlung) | Bemerkung |
+|------------|-----------|--------------------|-----------| 
+| VCC | 5V | Rot | Sensor benötigt 5V |
+| GND | GND | Schwarz | Gemeinsame Masse |
+| Trig | GPIO 5 | Gelb | Trigger-Signal (Output) |
+| Echo | GPIO 18 | Grün | Echo-Empfang (Input) |
 
-## ESP32 #2 (Client/Display)
-```
-HC-SR04 Ultraschallsensor:
-- VCC → 5V
-- GND → GND
-- Trig → GPIO 12
-- Echo → GPIO 14
+### Ampel-LEDs
+| LED | Anode (+) | Kathode (-) | Widerstand | Bemerkung |
+|-----|-----------|-------------|------------|-----------|
+| Rot | GPIO 25 | GND | 220Ω | In Reihe mit LED |
+| Gelb | GPIO 26 | GND | 220Ω | In Reihe mit LED |
+| Grün | GPIO 27 | GND | 220Ω | In Reihe mit LED |
 
-HW-61 I2C LCD Display:
-- VCC → 3.3V (oder 5V)
-- GND → GND
-- SDA → GPIO 21 (Standard I2C SDA)
-- SCL → GPIO 22 (Standard I2C SCL)
-```
+## 🔌 ESP32 #2 (Client mit Display)
 
-## Wichtige Hinweise:
+### Ultraschallsensor HC-SR04
+| Sensor-Pin | ESP32-Pin | Farbe (Empfehlung) | Bemerkung |
+|------------|-----------|--------------------|-----------| 
+| VCC | 5V | Rot | Sensor benötigt 5V |
+| GND | GND | Schwarz | Gemeinsame Masse |
+| Trig | GPIO 12 | Gelb | Boot-sicherer Pin |
+| Echo | GPIO 14 | Grün | Interrupt-fähig |
 
-### Pull-Up Widerstände
-- I2C Bus benötigt 4.7kΩ Pull-Up Widerstände auf SDA/SCL
-- Oft bereits auf LCD-Modul vorhanden
+### I2C LCD Display (20x4)
+| Display-Pin | ESP32-Pin | Farbe (Empfehlung) | Bemerkung |
+|-------------|-----------|--------------------|-----------| 
+| VCC | 5V* | Rot | *oder 3.3V je nach Modul |
+| GND | GND | Schwarz | Gemeinsame Masse |
+| SDA | GPIO 21 | Blau | I2C Data (Standard) |
+| SCL | GPIO 22 | Weiß | I2C Clock (Standard) |
 
-### Stromversorgung
-- HC-SR04 benötigt 5V für optimale Reichweite
-- ESP32 läuft mit 3.3V, toleriert aber 5V Input
-- Separate 5V Versorgung empfohlen für Sensoren
+## ⚡ Stromversorgung
 
-### I2C Adresse LCD
-- Standardadresse: 0x27 oder 0x3F
-- Mit I2C Scanner testen falls unklar:
-```cpp
-// I2C Scanner Code
-#include <Wire.h>
-void setup() {
-  Wire.begin();
-  Serial.begin(115200);
-  for(byte i = 8; i < 120; i++) {
-    Wire.beginTransmission(i);
-    if(Wire.endTransmission() == 0) {
-      Serial.print("I2C device at 0x");
-      Serial.println(i, HEX);
-    }
-  }
-}
-```
+### Spannungsebenen
+- **ESP32**: Arbeitet mit 3.3V Logik
+- **HC-SR04**: Benötigt 5V für volle Reichweite
+- **LCD Display**: Je nach Modell 3.3V oder 5V
+- **LEDs**: 3.3V mit Vorwiderständen
 
-### Bibliotheken installieren
-```
-Benötigte Libraries:
-- LiquidCrystal_I2C (by Frank de Brabander)
-- WiFi (ESP32 Standard)
-```
+### Stromaufnahme (typisch)
+| Komponente | Strom | Bemerkung |
+|------------|-------|-----------|
+| ESP32 | 80-150mA | WiFi aktiv |
+| HC-SR04 | 15mA | Pro Sensor |
+| LCD + Backlight | 20-60mA | Je nach Helligkeit |
+| LED | 20mA | Pro LED |
+| **Gesamt** | ~250mA | Pro ESP32-Einheit |
 
-### Mechanischer Aufbau
-- **Sensor-Abstand**: 30-200cm für zuverlässige Messung
-- **Ausrichtung**: Sensoren parallel, gleiche Höhe
-- **Schutz**: Sensoren vor direkter Sonneneinstrahlung schützen
-- **Befestigung**: Stabile Montage verhindert Vibrationen
+## 🔧 Aufbau-Tipps
 
-### Troubleshooting
-1. **Display zeigt nichts**: I2C Adresse prüfen, Verkabelung kontrollieren
-2. **Ungenaue Messungen**: Sensor-Position überprüfen, Hindernisse entfernen
-3. **Verbindungsabbrüche**: WLAN-Reichweite prüfen, Störquellen eliminieren
-4. **Falsche Triggerung**: Referenzdistanz neu kalibrieren
+### Breadboard-Layout
+1. **Stromschienen**: Rot = 5V/3.3V, Blau/Schwarz = GND
+2. **Komponenten-Platzierung**: ESP32 mittig für kurze Kabelwege
+3. **LED-Widerstände**: Direkt an LED-Anoden löten
+4. **Jumper-Kabel**: Verschiedene Farben für bessere Übersicht
 
-### Performance-Optimierung
-- **Loop-Delays reduziert**: 20ms statt 50ms für bessere Responsivität
-- **Mehr Kalibrierungs-Samples**: 15 statt 10 für genauere Referenz
-- **Hysterese**: 15% Überschreitung für sauberes Triggering
+### Mechanische Montage
+- **Sensor-Höhe**: 50-100cm über Boden optimal
+- **Ausrichtung**: Exakt horizontal und parallel
+- **Abstand**: Mindestens 1m zwischen den Sensoren
+- **Vibrationsdämpfung**: Schaumstoff unter Sensoren
+
+### Häufige Fehlerquellen
+| Problem | Ursache | Lösung |
+|---------|---------|---------|
+| ESP32 startet nicht | GPIO 12 beim Boot HIGH | Sensor kurz abziehen |
+| Display flackert | Schlechte Stromversorgung | Kondensator 100µF parallel |
+| Sensor ungenau | Reflexionen | Umgebung mit Stoff abdecken |
+| WiFi instabil | Zu schwaches Netzteil | Mindestens 1A verwenden |
+
+## 📐 Schaltplan-Hinweise
+
+### Wichtige GPIO-Einschränkungen
+- **GPIO 0, 2, 15**: Boot-Pins (nicht verwenden)
+- **GPIO 6-11**: Intern für Flash (nicht verfügbar)
+- **GPIO 34-39**: Nur Input (keine Outputs)
+- **GPIO 12**: Boot-Pin (LOW für normale Boot)
+
+### I2C-Besonderheiten
+- **Clock-Stretching**: Manche Displays benötigen es
+- **Bus-Geschwindigkeit**: 50kHz für 5V-Kompatibilität
+- **Pull-Ups**: 4.7kΩ optimal für 3.3V/5V Mix
+
+## ✅ Checkliste vor Inbetriebnahme
+
+- [ ] Alle Masse-Verbindungen (GND) verbunden?
+- [ ] 5V und 3.3V nicht vertauscht?
+- [ ] LED-Widerstände eingebaut?
+- [ ] I2C-Adressen-Jumper am Display gesetzt?
+- [ ] Sensor-Ausrichtung geprüft?
+- [ ] WiFi-Credentials in beiden Codes gleich?
+- [ ] Serial Monitor auf 115200 Baud?

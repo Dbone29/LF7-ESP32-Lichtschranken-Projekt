@@ -1,61 +1,60 @@
-// ESP32_2_Client_Sensor.ino - Verbesserte Version
+// ESP32 Client - Empfängt Zeitmessung und zeigt Ergebnis auf LCD
+// Verbindet sich mit ESP32 Server und fungiert als zweite Lichtschranke
 
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
-// Alternative: ESP32-LiquidCrystal-I2C oder ESP32LiquidCrystal
 
-// WiFi Client Settings
+// WiFi-Verbindung zum Server
 const char *ssid_ap = "MeinESP32AP";
 const char *password_ap = "meinPasswort123";
 
-// Server Settings
+// Server-Adresse (ESP32 #1)
 IPAddress serverIP(192, 168, 4, 1);
 const uint16_t serverPort = 80;
 
 WiFiClient client;
 
-// Display Settings (HW-61 I2C LCD)
-LiquidCrystal_I2C lcd(0x3F, 20, 4); // I2C address 0x3F, 20x4 display
-// Häufige Adressen: 0x27, 0x3F, 0x26, 0x20
+// I2C LCD Display - verschiedene Adressen möglich je nach Hersteller
+LiquidCrystal_I2C lcd(0x3F, 20, 4);
 
-// Sensor 2 Pins (Geändert um Konflikte zu vermeiden)
-const int trigPin2 = 12; // Geändert von 5
-const int echoPin2 = 14; // Geändert von 18
-#define SOUND_SPEED 0.034f
+// HC-SR04 auf anderen Pins als Server um Konflikte zu vermeiden
+const int trigPin2 = 12;
+const int echoPin2 = 14;
+#define SOUND_SPEED 0.034f  // cm/µs bei 20°C
 
-// Constants
-const unsigned long RECONNECT_DELAY_MS = 2000;
-const unsigned long LOOP_DELAY_MS = 20; // Reduziert für bessere Genauigkeit
-const unsigned long CONNECTION_TIMEOUT_MS = 15000;
-const float MIN_VALID_DISTANCE = 2.0f;
-const float MAX_VALID_DISTANCE = 400.0f;
-const int REFERENCE_SAMPLES = 15; // Mehr Samples für bessere Genauigkeit
+// Timing- und Sensor-Konstanten
+const unsigned long RECONNECT_DELAY_MS = 2000;      // Wartezeit zwischen Verbindungsversuchen
+const unsigned long LOOP_DELAY_MS = 20;             // Gleiche Abtastrate wie Server für Synchronität
+const unsigned long CONNECTION_TIMEOUT_MS = 15000;  // WiFi-Verbindungs-Timeout
+const float MIN_VALID_DISTANCE = 2.0f;              // HC-SR04 technisches Minimum
+const float MAX_VALID_DISTANCE = 400.0f;            // HC-SR04 technisches Maximum
+const int REFERENCE_SAMPLES = 15;                   // Gleiche Anzahl wie Server für konsistente Kalibrierung
 
-// States
+// Client-Zustandsmaschine synchronisiert mit Server-States
 enum StateClient
 {
-    WAITING_FOR_CONNECTION,
-    IDLE_WAITING_FOR_START,
-    TIMING_IN_PROGRESS,
-    DISPLAYING_RESULT
+    WAITING_FOR_CONNECTION,     // Versucht WiFi/Server-Verbindung herzustellen
+    IDLE_WAITING_FOR_START,     // Bereit, wartet auf START_TIMER vom Server
+    TIMING_IN_PROGRESS,         // Misst aktiv Zeit und wartet auf Objekt
+    DISPLAYING_RESULT           // Zeigt Ergebnis für definierte Zeit
 };
 StateClient clientState = WAITING_FOR_CONNECTION;
 
-// Heartbeat
+// Heartbeat-System erkennt Verbindungsabbrüche
 unsigned long lastHeartbeatReceived = 0;
-const unsigned long HEARTBEAT_TIMEOUT_MS = 15000; // 15 Sekunden Timeout
+const unsigned long HEARTBEAT_TIMEOUT_MS = 15000;  // 3x Heartbeat-Intervall als Puffer
 
-// Variables
-float referenceDistance2 = -1.0f;
-float triggerThreshold2 = -1.0f;
-unsigned long timingStartTime = 0;
-unsigned long lastMeasuredTime = 0;
+// Sensor- und Timing-Variablen
+float referenceDistance2 = -1.0f;       // Kalibrierte Referenzdistanz
+float triggerThreshold2 = -1.0f;        // Auslöseschwelle = Referenz / 2
+unsigned long timingStartTime = 0;      // Zeitpunkt des START_TIMER Empfangs
+unsigned long lastMeasuredTime = 0;     // Letzte gemessene Zeit für Anzeige
 unsigned long lastConnectionAttempt = 0;
 unsigned long displayStartTime = 0;
-const unsigned long DISPLAY_DURATION_MS = 5000; // 5 Sekunden anzeigen
-bool displayAvailable = false;
+const unsigned long DISPLAY_DURATION_MS = 5000;  // Ergebnis 5s anzeigen
+bool displayAvailable = false;          // Flag ob Display gefunden wurde
 
 // Function Prototypes
 float measureDistanceClient(int trigPin, int echoPin);
@@ -71,11 +70,10 @@ void setup()
     Serial.begin(115200);
     delay(100);
 
-    // Sensor Setup
     pinMode(trigPin2, OUTPUT);
     pinMode(echoPin2, INPUT);
 
-    // Display Setup
+    // Display-Initialisierung mit I2C-Scan
     initializeDisplay();
 
     Serial.println("\nESP2: Client Setup gestartet");
@@ -84,6 +82,7 @@ void setup()
     clientState = WAITING_FOR_CONNECTION;
 }
 
+// I2C-Scanner hilft bei Display-Problemen die richtige Adresse zu finden
 void scanI2CDevices() {
     Serial.println("ESP2: Scanne I2C Geräte...");
     int deviceCount = 0;
@@ -112,19 +111,19 @@ void scanI2CDevices() {
 void initializeDisplay()
 {
     Serial.println("ESP2: Initialisiere Display mit 5V...");
-    Wire.begin(21, 22); // SDA=21, SCL=22
-    Wire.setTimeout(1000); // 1 Sekunde Timeout
-    Wire.setClock(50000); // Noch langsamer: 50kHz für 5V Display
+    Wire.begin(21, 22);     // Standard I2C Pins auf ESP32
+    Wire.setTimeout(1000);  // Timeout verhindert Hänger bei fehlerhafter Verkabelung
+    Wire.setClock(50000);   // Reduzierte Geschwindigkeit für 5V-Displays an 3.3V ESP32
     
-    delay(500); // Display-Startup Zeit
+    delay(500); // Display benötigt Zeit zum Starten
     
-    // Scanne I2C Geräte
     scanI2CDevices();
     
-    // Teste nur gängige Adressen
+    // Teste häufigste I2C-Adressen für LCD-Module
     uint8_t addresses[] = {0x27, 0x3F, 0x20, 0x26};
     displayAvailable = false;
     
+    // Automatische Adresserkennung durch systematisches Testen
     for (int i = 0; i < 4; i++) {
         Serial.print("ESP2: Teste 5V-Display bei 0x");
         Serial.println(addresses[i], HEX);
@@ -136,6 +135,7 @@ void initializeDisplay()
             Serial.print("ESP2: 5V-Display gefunden bei 0x");
             Serial.println(addresses[i], HEX);
             
+            // Display mit gefundener Adresse neu initialisieren
             lcd = LiquidCrystal_I2C(addresses[i], 20, 4);
             delay(100);
             lcd.init();
@@ -143,7 +143,7 @@ void initializeDisplay()
             lcd.backlight();
             delay(100);
             
-            // Test schreiben
+            // Funktionstest
             lcd.clear();
             lcd.setCursor(0, 0);
             lcd.print("5V Display OK!");
@@ -175,7 +175,7 @@ void initializeDisplay()
 
 void updateDisplay(const String &line1, const String &line2, const String &line3, const String &line4)
 {
-    // Nur wenn Display verfügbar ist
+    // Fallback auf Serial wenn Display nicht verfügbar
     if (!displayAvailable) {
         Serial.println("ESP2: " + line1 + (line2.length() > 0 ? " | " + line2 : ""));
         return;
@@ -205,14 +205,14 @@ void connectToWiFiAndServer()
 {
     unsigned long currentTime = millis();
 
-    // Verhindere zu häufige Verbindungsversuche
+    // Rate-limiting verhindert WiFi-Modul-Überlastung
     if (currentTime - lastConnectionAttempt < RECONNECT_DELAY_MS)
     {
         return;
     }
     lastConnectionAttempt = currentTime;
 
-    // WiFi Verbindung prüfen/aufbauen
+    // Zweistufiger Verbindungsaufbau: erst WiFi, dann TCP
     if (WiFi.status() != WL_CONNECTED)
     {
         Serial.print("ESP2: Verbinde mit WLAN '");
@@ -244,7 +244,7 @@ void connectToWiFiAndServer()
         delay(1000);
     }
 
-    // Server Verbindung aufbauen
+    // TCP-Verbindung zum Server
     if (!client.connected())
     {
         Serial.println("ESP2: Verbinde zum Server...");
@@ -254,10 +254,11 @@ void connectToWiFiAndServer()
         {
             Serial.println("ESP2: Mit Server verbunden!");
 
+            // Sensor-Kalibrierung mit Fallback bei Fehler
             if (!establishInitialReferenceDistanceClient())
             {
                 Serial.println("ESP2: WARNUNG - Referenzdistanz Fallback");
-                referenceDistance2 = 50.0f;
+                referenceDistance2 = 50.0f;  // Sicherer Standardwert
                 updateDisplay("Sensor Warnung!", "Fallback: 50cm", "Pruefen Sie Sensor", "");
                 delay(2000);
             }
@@ -269,9 +270,10 @@ void connectToWiFiAndServer()
             Serial.print(triggerThreshold2);
             Serial.println("cm");
 
+            // Protokoll: CLIENT_READY signalisiert Bereitschaft
             client.println("CLIENT_READY");
             clientState = IDLE_WAITING_FOR_START;
-            lastHeartbeatReceived = millis(); // Heartbeat Timer starten
+            lastHeartbeatReceived = millis(); // Startet Heartbeat-Überwachung
             updateDisplay("Bereit!", "Warte auf Start...",
                           "Referenz: " + String(referenceDistance2, 1) + "cm",
                           "Trigger: " + String(triggerThreshold2, 1) + "cm");
@@ -292,6 +294,7 @@ bool establishInitialReferenceDistanceClient()
     float totalDist = 0;
     int validSamples = 0;
 
+    // Gleiche Kalibrierungsmethode wie Server für Konsistenz
     for (int i = 0; i < REFERENCE_SAMPLES; i++)
     {
         float dist = measureDistanceClient(trigPin2, echoPin2);
@@ -301,7 +304,7 @@ bool establishInitialReferenceDistanceClient()
             validSamples++;
         }
 
-        // Fortschritt anzeigen
+        // Live-Fortschrittsanzeige
         if (displayAvailable) {
             lcd.setCursor(0, 3);
             lcd.print("Sample " + String(i + 1) + "/" + String(REFERENCE_SAMPLES));
@@ -309,8 +312,9 @@ bool establishInitialReferenceDistanceClient()
         delay(100);
     }
 
+    // 50% Mindest-Erfolgsquote wie beim Server
     if (validSamples >= REFERENCE_SAMPLES / 2)
-    { // Mindestens 50% gültige Messungen
+    {
         referenceDistance2 = totalDist / validSamples;
         Serial.print("ESP2: Referenzdistanz: ");
         Serial.print(referenceDistance2);
@@ -326,13 +330,14 @@ bool establishInitialReferenceDistanceClient()
 
 float measureDistanceClient(int trigPin, int echoPin)
 {
+    // Identische Messmethode wie Server für vergleichbare Ergebnisse
     digitalWrite(trigPin, LOW);
     delayMicroseconds(2);
     digitalWrite(trigPin, HIGH);
     delayMicroseconds(10);
     digitalWrite(trigPin, LOW);
 
-    long duration = pulseIn(echoPin, HIGH, 30000); // 30ms timeout
+    long duration = pulseIn(echoPin, HIGH, 30000);
     if (duration == 0)
     {
         return -1.0f;
@@ -342,12 +347,13 @@ float measureDistanceClient(int trigPin, int echoPin)
 
 void handleConnectionLoss()
 {
+    // Automatischer State-Reset bei Verbindungsverlust
     if (!client.connected() && clientState != WAITING_FOR_CONNECTION)
     {
         Serial.println("ESP2: Verbindung verloren!");
         updateDisplay("Verbindung verloren!", "Reconnecting...", "", "");
         clientState = WAITING_FOR_CONNECTION;
-        timingStartTime = 0; // Reset timing if in progress
+        timingStartTime = 0; // Verhindert falsche Zeitmessung nach Reconnect
     }
 }
 
@@ -362,7 +368,7 @@ void loop()
         return;
     }
 
-    // Server Nachrichten verarbeiten
+    // Protokoll-Handler für Server-Nachrichten
     if (client.available())
     {
         String serverData = client.readStringUntil('\n');
@@ -381,6 +387,7 @@ void loop()
         }
         else if (serverData.equals("START_TIMER") && clientState != IDLE_WAITING_FOR_START)
         {
+            // State-Check verhindert fehlerhafte Messungen
             Serial.println("ESP2: WARNUNG - START_TIMER ignoriert, nicht bereit!");
             Serial.print("ESP2: Aktueller State: ");
             Serial.println(clientState);
@@ -388,22 +395,22 @@ void loop()
         else if (serverData.equals("HEARTBEAT"))
         {
             lastHeartbeatReceived = millis();
-            client.println("HEARTBEAT_ACK");
+            client.println("HEARTBEAT_ACK");  // Bestätigung zurück an Server
             Serial.println("ESP2: Heartbeat empfangen und bestätigt");
         }
     }
     
-    // Heartbeat Timeout prüfen
+    // Heartbeat-Timeout erkennt stille Verbindungsabbrüche
     if (clientState != WAITING_FOR_CONNECTION && 
         millis() - lastHeartbeatReceived > HEARTBEAT_TIMEOUT_MS)
     {
         Serial.println("ESP2: Heartbeat Timeout - Verbindung verloren!");
         updateDisplay("Heartbeat Timeout!", "Verbindung verloren", "", "");
         clientState = WAITING_FOR_CONNECTION;
-        client.stop();
+        client.stop();  // Sauberer Verbindungsabbau
     }
 
-    // Hauptlogik je nach State
+    // Client-Zustandsmaschine
     switch (clientState)
     {
     case TIMING_IN_PROGRESS:
@@ -412,7 +419,7 @@ void loop()
         unsigned long currentTime = millis();
         unsigned long elapsedTime = currentTime - timingStartTime;
 
-        // Live-Update der Zeit auf Display (alle 100ms)
+        // 10Hz Display-Update für flüssige Zeitanzeige
         static unsigned long lastDisplayUpdate = 0;
         if (currentTime - lastDisplayUpdate >= 100)
         {
@@ -423,7 +430,7 @@ void loop()
             lastDisplayUpdate = currentTime;
         }
 
-        // Objekt erkannt?
+        // Objekterkennung beendet Zeitmessung
         if (currentDistance2 > 0 && currentDistance2 <= triggerThreshold2)
         {
             lastMeasuredTime = elapsedTime;
@@ -433,6 +440,7 @@ void loop()
 
             if (client.connected())
             {
+                // Protokoll: STOP_TIMER:Zeit_in_ms
                 String message = "STOP_TIMER:" + String(lastMeasuredTime);
                 client.println(message);
                 Serial.print("ESP2: Gesendet: '");
@@ -458,7 +466,7 @@ void loop()
 
     case DISPLAYING_RESULT:
     {
-        // Ergebnis für bestimmte Zeit anzeigen, dann zurück zu IDLE
+        // Automatischer Übergang zu IDLE nach Anzeigedauer
         if (millis() - displayStartTime >= DISPLAY_DURATION_MS)
         {
             clientState = IDLE_WAITING_FOR_START;
@@ -470,7 +478,7 @@ void loop()
     }
 
     case IDLE_WAITING_FOR_START:
-        // Nichts zu tun, warten auf START_TIMER
+        // Wartet passiv auf START_TIMER vom Server
         break;
 
     default:

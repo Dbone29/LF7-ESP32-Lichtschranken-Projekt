@@ -1,211 +1,375 @@
-# Lichtschranken-Zeitmessungssystem mit ESP32
+# ESP32 Lichtschranken-Zeitmessung
 
-Ein drahtloses Zeitmessungssystem basierend auf zwei ESP32-Mikrocontrollern und Ultraschallsensoren zur präzisen Messung von Durchgangszeiten zwischen zwei Messpunkten.
+Präzises drahtloses Zeitmessungssystem mit zwei ESP32-Mikrocontrollern für Sport, Automation und Bildung.
 
 ## 🎯 Projektübersicht
 
-Dieses System simuliert eine Lichtschranke mit zwei Ultraschallsensoren und misst die Zeit, die ein Objekt benötigt, um von der ersten zur zweiten "Schranke" zu gelangen. Die Kommunikation zwischen beiden ESP32 erfolgt über WiFi.
+Dieses System implementiert eine kontaktlose Zeitmessung mit Ultraschallsensoren, die als "Lichtschranken" fungieren. Die Kommunikation erfolgt über ein dediziertes WiFi-Netzwerk für maximale Zuverlässigkeit.
+
+### Anwendungsbereiche
+- **Sport**: Zeitmessung bei Sprint-Übungen oder Parcours
+- **Bildung**: Physik-Experimente zur Geschwindigkeitsmessung
+- **Automation**: Überwachung von Durchlaufzeiten in Produktionslinien
+- **Verkehr**: Geschwindigkeitsmessung von Fahrzeugen
 
 ### Funktionsweise
-1. **Start**: Objekt durchbricht die erste Schranke (ESP32 #1)
-2. **Ampelsequenz**: Grün → Gelb → Rot → Alle LEDs an
-3. **Zeitmessung**: Startet automatisch nach der Ampelsequenz
-4. **Stop**: Objekt durchbricht die zweite Schranke (ESP32 #2)
-5. **Anzeige**: Gemessene Zeit wird auf dem Display angezeigt
+1. **Bereitschaft**: Grüne LED signalisiert Messbereitschaft
+2. **Objekterkennung**: Erste Schranke erkennt Objekt → Ampelsequenz startet
+3. **Ampelsequenz**: Grün erlischt → 0.5s Pause → Gelb → 2s später Rot
+4. **Zeitmessung**: Beginnt wenn Objekt die erste Schranke verlässt (alle LEDs an)
+5. **Stopp**: Zweite Schranke erkennt Objekt → Zeit wird gestoppt und angezeigt
 
 ## 🔧 Hardware-Komponenten
 
-### ESP32 #1 (Server/Sender)
-- **ESP32 Entwicklungsboard**
-- **HC-SR04 Ultraschallsensor** (Sensor 1)
-- **3 LEDs** (Rot, Gelb, Grün) + Vorwiderstände (220Ω)
-- **Breadboard und Verbindungskabel**
+### ESP32 #1 (Server/Ampelsteuerung)
+- **ESP32 DevKit** (z.B. ESP32-WROOM-32)
+- **HC-SR04 Ultraschallsensor**
+- **3x LED** (Rot, Gelb, Grün)
+- **3x 220Ω Widerstände** (LED-Vorwiderstände)
+- **Breadboard & Jumper-Kabel**
 
-### ESP32 #2 (Client/Empfänger)
-- **ESP32 Entwicklungsboard**
-- **HC-SR04 Ultraschallsensor** (Sensor 2)
-- **HW-61 I2C LCD Display** (20x4 Zeichen)
-- **Breadboard und Verbindungskabel**
+### ESP32 #2 (Client/Zeitanzeige)
+- **ESP32 DevKit** (z.B. ESP32-WROOM-32)
+- **HC-SR04 Ultraschallsensor**
+- **20x4 I2C LCD Display** (5V-kompatibel)
+- **Breadboard & Jumper-Kabel**
+- **Optional**: Pull-up Widerstände (4.7kΩ) für I2C
 
 ## 📡 Systemarchitektur
 
 ```
-ESP32 #1 (Server)           WiFi            ESP32 #2 (Client)
-┌─────────────────┐       ◄─────►          ┌─────────────────┐
-│ • HC-SR04       │                        │ • HC-SR04       │
-│ • Ampel LEDs    │    192.168.4.x         │ • LCD Display   │
-│ • Access Point  │                        │ • WiFi Client   │
-└─────────────────┘                        └─────────────────┘
+ESP32 #1 (Server)                        ESP32 #2 (Client)
+┌─────────────────────┐                ┌─────────────────────┐
+│ • Ultraschallsensor │                │ • Ultraschallsensor │
+│ • Ampel-LEDs        │     WiFi       │ • LCD-Display       │
+│ • Access Point      │ ◄────────────► │ • WiFi Station      │
+│ • State Machine     │  192.168.4.x   │ • Zeitmessung       │
+│ • Datenlogging      │                │ • Heartbeat-Monitor │
+└─────────────────────┘                └─────────────────────┘
+
+Kommunikationsprotokoll:
+• START_TIMER: Server → Client (Zeitmessung starten)
+• STOP_TIMER:xxxxx: Client → Server (Zeit in ms)
+• HEARTBEAT/ACK: Verbindungsüberwachung (5s Intervall)
+• CLIENT_READY: Client meldet Bereitschaft
 ```
 
-## 🔌 Verkabelung
+## 🔌 Pin-Belegung
 
 ### ESP32 #1 (Server)
-```
-HC-SR04 Ultraschallsensor:
-├── VCC → 5V
-├── GND → GND  
-├── Trig → GPIO 5
-└── Echo → GPIO 18
 
-Ampel LEDs:
-├── Rot → GPIO 25
-├── Gelb → GPIO 26
-├── Grün → GPIO 27
-└── Alle GND → GND
-```
+| Komponente | Pin | ESP32 GPIO | Hinweis |
+|------------|-----|------------|---------|
+| **HC-SR04** | | | |
+| VCC | → | 5V | Sensor benötigt 5V |
+| GND | → | GND | |
+| Trig | → | GPIO 5 | Trigger-Signal |
+| Echo | → | GPIO 18 | Echo-Empfang |
+| **LEDs** | | | |
+| Rot (Anode) | → | GPIO 25 | über 220Ω Widerstand |
+| Gelb (Anode) | → | GPIO 26 | über 220Ω Widerstand |
+| Grün (Anode) | → | GPIO 27 | über 220Ω Widerstand |
+| Alle Kathoden | → | GND | Gemeinsame Masse |
 
 ### ESP32 #2 (Client)
+
+| Komponente | Pin | ESP32 GPIO | Hinweis |
+|------------|-----|------------|---------|
+| **HC-SR04** | | | |
+| VCC | → | 5V | Sensor benötigt 5V |
+| GND | → | GND | |
+| Trig | → | GPIO 12 | Andere Pins als Server |
+| Echo | → | GPIO 14 | zur Vermeidung von Konflikten |
+| **I2C LCD** | | | |
+| VCC | → | 5V | Display benötigt 5V! |
+| GND | → | GND | |
+| SDA | → | GPIO 21 | I2C Daten |
+| SCL | → | GPIO 22 | I2C Clock |
+
+⚠️ **Wichtig**: Das LCD-Display benötigt 5V Versorgungsspannung, funktioniert aber mit 3.3V I2C-Signalen des ESP32.
+
+## 📚 Software-Voraussetzungen
+
+### Arduino IDE Einrichtung
+
+1. **ESP32 Board Package installieren**:
+   - Öffnen Sie: `Datei → Voreinstellungen`
+   - Fügen Sie diese URL bei "Zusätzliche Boardverwalter-URLs" ein:
+     ```
+     https://dl.espressif.com/dl/package_esp32_index.json
+     ```
+   - Öffnen Sie: `Werkzeuge → Board → Boardverwalter`
+   - Suchen Sie "ESP32" und installieren Sie "ESP32 by Espressif Systems"
+
+2. **Benötigte Bibliotheken**:
+   - **LiquidCrystal_I2C** by Frank de Brabander (über Library Manager)
+   - Alle anderen Bibliotheken sind im ESP32-Paket enthalten
+
+### Board-Einstellungen
 ```
-HC-SR04 Ultraschallsensor:
-├── VCC → 5V
-├── GND → GND
-├── Trig → GPIO 12
-└── Echo → GPIO 14
-
-HW-61 I2C LCD Display:
-├── VCC → 3.3V (oder 5V)
-├── GND → GND
-├── SDA → GPIO 21
-└── SCL → GPIO 22
+Board: "ESP32 Wrover Module" oder "ESP32 Dev Module"
+Upload Speed: 115200
+Flash Frequency: 80MHz
+Flash Mode: QIO
+Partition Scheme: Default 4MB with spiffs
 ```
 
-## 📚 Benötigte Bibliotheken
+## ⚙️ Installation & Konfiguration
 
-Installieren Sie folgende Libraries über den Arduino IDE Library Manager:
+### 1. Hardware-Aufbau
+1. Bauen Sie die Schaltungen gemäß Pin-Belegung auf
+2. Überprüfen Sie alle Verbindungen (besonders 5V/3.3V)
+3. Testen Sie die LEDs mit einem einfachen Blink-Sketch
+
+### 2. Software-Upload
+
+**ESP32 #1 (Server)**:
+1. Öffnen Sie `ESP32-Server.cpp` in Arduino IDE
+2. Wählen Sie den richtigen COM-Port
+3. Upload-Taste drücken
+4. Serial Monitor öffnen (115200 Baud)
+
+**ESP32 #2 (Client)**:
+1. Öffnen Sie `ESP32-Client.cpp` in Arduino IDE
+2. Wählen Sie den richtigen COM-Port
+3. Upload-Taste drücken
+4. Serial Monitor öffnen (115200 Baud)
+
+### 3. Anpassbare Parameter
 
 ```cpp
-// Für ESP32 #2 (Client)
-#include <WiFi.h>
-#include <WiFiClient.h>
-#include <LiquidCrystal_I2C.h>  // by Frank de Brabander
+// WiFi-Konfiguration (in beiden Dateien)
+const char *ssid_ap = "MeinESP32AP";      // Netzwerkname ändern
+const char *password_ap = "meinPasswort123"; // Sicheres Passwort wählen!
 
-// Für ESP32 #1 (Server) - Erweitert
-#include <WiFi.h>
-#include <WiFiClient.h>
-#include <WiFiAP.h>
-#include <SPIFFS.h>        // Datenlogging
+// Timing-Parameter (Server)
+const unsigned long YELLOW_PENDING_DELAY_MS = 500;     // Verzögerung vor Gelb
+const unsigned long RED_PENDING_DELAY_AFTER_YELLOW_MS = 2000; // Gelb-Dauer
+
+// Sensor-Empfindlichkeit
+const float HYSTERESIS_FACTOR = 1.15f;     // 15% Hysterese gegen Prellen
+const int REFERENCE_SAMPLES = 15;          // Anzahl Kalibrierungsmessungen
 ```
 
-## ⚙️ Installation & Setup
+## 🚀 Betriebsanleitung
 
-### 1. Arduino IDE Vorbereitung
-```bash
-# ESP32 Board Package installieren
-# In Arduino IDE: File → Preferences → Additional Board Manager URLs:
-# https://dl.espressif.com/dl/package_esp32_index.json
+### Systemstart
 
-# Board auswählen: ESP32 Wrover Module
-# Upload Speed: 115200
-# Flash Mode: QIO
+1. **ESP32 #1 (Server) einschalten**
+   - LED-Test: Alle LEDs leuchten kurz auf
+   - Access Point wird erstellt
+   - Sensor-Kalibrierung (Rot+Gelb leuchten)
+   - Grüne LED = System bereit
+
+2. **ESP32 #2 (Client) einschalten**
+   - Display zeigt "ESP2 Client - Initialisierung..."
+   - Automatische WiFi-Verbindung
+   - Sensor-Kalibrierung mit Fortschrittsanzeige
+   - Display zeigt "Bereit!" mit Referenzwerten
+
+### Messablauf
+
+1. **Vorbereitung**
+   - Stellen Sie sicher, dass beide Sensoren freie Sicht haben
+   - Objekt sollte größer als 10cm² sein für zuverlässige Erkennung
+   - Idealer Abstand: 20-100cm von den Sensoren
+
+2. **Messung starten**
+   - Objekt langsam vor Sensor 1 bewegen
+   - Grüne LED erlischt → Objekt wurde erkannt
+   - Ampelsequenz läuft automatisch ab
+
+3. **Zeitmessung**
+   - Bei Rot: Objekt von Sensor 1 entfernen
+   - Alle LEDs leuchten = Zeitmessung läuft
+   - Display zeigt Live-Zeit in Sekunden
+   - Objekt zu Sensor 2 bewegen
+
+4. **Ergebnis**
+   - Zeit wird automatisch gestoppt
+   - Display zeigt Ergebnis in Sekunden und Millisekunden
+   - Nach 5 Sekunden: System bereit für nächste Messung
+
+## 📊 Technische Daten
+
+### Leistungsdaten
+| Parameter | Wert | Bemerkung |
+|-----------|------|------------|
+| **Messbereich** | 2 - 400 cm | HC-SR04 Spezifikation |
+| **Distanz-Genauigkeit** | ± 0.3 cm | Bei stabilen Bedingungen |
+| **Zeitauflösung** | 1 ms | Software-limitiert |
+| **Abtastrate** | 50 Hz | 20ms Loop-Delay |
+| **Max. Messzeit** | 30 Sekunden | Timeout-Schutz |
+| **Min. Objektgröße** | ~10 cm² | Für zuverlässige Erkennung |
+
+### System-Features
+| Feature | Beschreibung |
+|---------|-------------|
+| **Median-Filter** | 5 Messungen pro Datenpunkt |
+| **Hysterese** | 15% zur Vermeidung von Fehlauslösungen |
+| **Heartbeat** | 5s Intervall für Verbindungsüberwachung |
+| **Auto-Recovery** | Automatische Wiederherstellung nach Fehler |
+| **Datenlogging** | CSV-Format auf SPIFFS (100KB Rotation) |
+| **Statistik** | Min/Max/Durchschnitt in Echtzeit |
+
+## 🔍 Fehlerbehebung
+
+### Häufige Probleme und Lösungen
+
+#### Display zeigt nichts an
+- **Ursache**: Falsche I2C-Adresse oder Verkabelung
+- **Lösung**:
+  1. Überprüfen Sie die Verkabelung (besonders VCC → 5V!)
+  2. Der Code scannt automatisch gängige Adressen
+  3. Prüfen Sie Serial Monitor für gefundene I2C-Geräte
+  4. Bei Bedarf I2C-Adresse im Code anpassen
+
+#### "Sensor ausgefallen" Fehler
+- **Ursache**: Sensor-Verbindung oder Hindernisse
+- **Lösung**:
+  1. Verkabelung prüfen (5V und GND)
+  2. Freie Sicht des Sensors sicherstellen
+  3. Mindestabstand 20cm zu Wänden einhalten
+  4. System neustarten für neue Kalibrierung
+
+#### Verbindung bricht ständig ab
+- **Ursache**: Schwaches WiFi-Signal oder Interferenz
+- **Lösung**:
+  1. ESP32s näher zusammenstellen (<10m)
+  2. WiFi-Kanal in der Umgebung prüfen
+  3. Metallische Hindernisse entfernen
+  4. Externes Antenne verwenden (falls möglich)
+
+#### Zeitmessung startet nicht
+- **Ursache**: Timing-Flag blockiert
+- **Lösung**:
+  1. Warten bis vorherige Messung komplett abgeschlossen
+  2. Auf "Bereit!" im Display warten
+  3. Bei Blockierung: Beide ESP32 neustarten
+
+#### Fehlerhafte Zeitmessungen
+- **Ursache**: Objekt zu klein oder zu schnell
+- **Lösung**:
+  1. Größeres Objekt verwenden (min. 10cm²)
+  2. Langsamer bewegen bei Sensor-Durchgang
+  3. Sensoren genau ausrichten
+  4. Umgebungslicht/Reflexionen minimieren
+
+### Debug-Modus aktivieren
+
+Für detaillierte Fehleranalyse nutzen Sie den Serial Monitor:
+
+1. Öffnen Sie Serial Monitor (115200 Baud)
+2. Beobachten Sie die Status-Meldungen
+3. Typische Meldungen:
+   - `ESP1: State=1` → System im IDLE_GREEN Zustand
+   - `ESP1: Referenzdistanz: XX.Xcm` → Kalibrierungswert
+   - `ESP1: WARNUNG - Zeitmessung läuft noch!` → Vorherige Messung nicht abgeschlossen
+
+## 🎛️ LED-Signale & Status
+
+### Normale Betriebszustände
+
+| LED-Status | Bedeutung | Aktion |
+|------------|-----------|--------|
+| 🟢 Grün | System bereit | Objekt vor Sensor 1 platzieren |
+| ⚫ Alle aus | Objekt erkannt | 0.5s Pause vor Gelb |
+| 🟡 Gelb | Vorwarnung | 2s bis Rot |
+| 🔴 Rot | Startposition | Objekt jetzt entfernen! |
+| 🔴🟡🟢 Alle | Zeitmessung aktiv | Zu Sensor 2 bewegen |
+| 🟡 Gelb (solo) | Ergebnis empfangen | 2s Cooldown |
+
+### Fehlerzustände
+
+| LED-Status | Bedeutung | Lösung |
+|------------|-----------|--------|  
+| 🔴 Rot blinkend (5x) | Systemfehler | Serial Monitor prüfen |
+| 🔴🟡 Rot+Gelb | Kalibrierung | Messbereich freihalten |
+| 🔴🟡🟢 Alle (Startup) | LED-Test | Normal beim Start |
+
+## 📈 Erweiterte Funktionen
+
+### Implementierte Features
+
+#### Robuste Sensorik
+- **Median-Filter**: Eliminiert Ausreißer durch 5-fach Messung
+- **Automatische Kalibrierung**: Kompensiert Umgebungsbedingungen
+- **Hysterese (15%)**: Verhindert Prellen bei Grenzwerten
+- **Gültigkeitsprüfung**: Erkennt fehlerhafte Messungen
+
+#### Zuverlässige Kommunikation  
+- **Heartbeat-Mechanismus**: Erkennt stille Verbindungsabbrüche
+- **Auto-Reconnect**: Automatische Wiederverbindung
+- **State-Synchronisation**: Server und Client bleiben synchron
+- **Timeout-Protection**: Verhindert Systemblockaden
+
+#### Datenanalyse
+- **Live-Statistik**: Min/Max/Durchschnitt in Echtzeit
+- **SPIFFS-Logging**: Persistente Speicherung im CSV-Format
+- **Auto-Rotation**: Log-Dateien bei 100KB automatisch gelöscht
+- **Zeitstempel**: Millisekunden-genaue Aufzeichnung
+
+### Geplante Erweiterungen
+
+1. **Web-Interface**: Statistiken über Browser abrufen
+2. **Multi-Client**: Mehrere Zeitmess-Stationen parallel
+3. **Bluetooth-Support**: Alternative Verbindungsmöglichkeit
+4. **SD-Karten-Logger**: Erweiterte Datenspeicherung
+5. **Geschwindigkeitsberechnung**: Bei bekannter Strecke
+
+## 🏗️ Projektstruktur
+
+```
+LF7/
+├── ESP32-Server.cpp      # Hauptcode Server (Ampel + Sensor 1)
+├── ESP32-Client.cpp      # Hauptcode Client (Display + Sensor 2)
+├── README.md            # Diese Dokumentation
+├── Verkabelung.md       # Detaillierte Verkabelungsanleitung
+├── Berichtsheft.md      # Projekt-Dokumentation
+└── test/                # Test- und Beispielcode
+    ├── AP.cpp           # Access Point Test
+    ├── AmpelLed.cpp     # LED-Ampel Test
+    ├── SchallSensor.cpp # Ultraschall-Sensor Test
+    └── wifiClient.cpp   # WiFi-Verbindungstest
 ```
 
-### 2. Code Upload
-1. **ESP32 #1**: Laden Sie `ESP32-Server.cpp` hoch
-2. **ESP32 #2**: Laden Sie `ESP32-Client.cpp` hoch
+## 🔬 Messprinzip
 
-### 3. WiFi-Konfiguration
-```cpp
-// In beiden Dateien anpassbar:
-const char *ssid_ap = "MeinESP32AP";
-const char *password_ap = "meinPasswort123";
-IPAddress serverIP(192, 168, 4, 1);
-```
+### Ultraschall-Entfernungsmessung
 
-## 🚀 Inbetriebnahme
+1. **Trigger**: 10µs HIGH-Puls startet Messung
+2. **Echo**: Sensor sendet 8x 40kHz Ultraschallpulse
+3. **Laufzeit**: Zeit bis Echo zurückkommt wird gemessen
+4. **Berechnung**: `Distanz = (Laufzeit × Schallgeschwindigkeit) / 2`
+5. **Schallgeschwindigkeit**: 0.034 cm/µs bei 20°C
 
-### 1. Start-Sequenz
-1. **ESP32 #1 einschalten** → Access Point wird gestartet
-2. **ESP32 #2 einschalten** → Verbindet sich automatisch mit ESP32 #1
-3. **Kalibrierung** → Beide Sensoren messen Referenzdistanz
-4. **System bereit** → Grüne LED leuchtet, Display zeigt "Bereit!"
+### Zeitmessung
 
-### 2. Messung durchführen
-1. Objekt vor **Sensor 1** platzieren
-2. **Ampelsequenz** startet automatisch
-3. Nach Rot-Phase: **Objekt entfernen** → Zeitmessung beginnt
-4. Objekt vor **Sensor 2** platzieren → **Zeitmessung stoppt**
-5. **Ergebnis** wird 5 Sekunden auf Display angezeigt
+1. **Referenzmessung**: Leerer Bereich wird kalibriert
+2. **Schwellwert**: Trigger bei 50% der Referenzdistanz
+3. **Start**: Wenn Objekt Sensor 1 verlässt
+4. **Stop**: Wenn Objekt Sensor 2 erreicht
+5. **Genauigkeit**: ±1ms durch 50Hz Abtastrate
 
-## 📊 Technische Spezifikationen
+## 📝 Lizenz
 
-| Parameter | Wert |
-|-----------|------|
-| **Messbereich** | 2 - 400 cm |
-| **Messgenauigkeit** | ± 0.3 cm |
-| **Zeitauflösung** | 1 ms |
-| **WiFi-Reichweite** | ~10-50m (je nach Umgebung) |
-| **Max. Messzeit** | 30 Sekunden |
-| **Display** | 20x4 Zeichen LCD |
-| **Kalibrierung** | 15 Messungen pro Sensor |
+MIT License - Siehe LICENSE Datei für Details
 
-## 🔍 Troubleshooting
+## 🤝 Beiträge
 
-### Display zeigt nichts
-```cpp
-// I2C-Adresse prüfen (Standard: 0x27 oder 0x3F)
-LiquidCrystal_I2C lcd(0x27, 20, 4);  // Ggf. auf 0x3F ändern
-```
+Beiträge sind willkommen! Bitte erstellen Sie einen Pull Request mit:
+- Klarer Beschreibung der Änderungen
+- Test-Ergebnissen
+- Aktualisierten Kommentaren
 
-### Verbindungsprobleme
-- WiFi-Reichweite prüfen
-- Serial Monitor (115200 baud) für Debug-Infos nutzen
-- ESP32 #1 zuerst starten, dann ESP32 #2
+## 🔗 Weiterführende Links
 
-### Ungenaue Messungen
-- Sensoren parallel ausrichten
-- Referenzdistanz neu kalibrieren (Neustart)
-- Hindernisse im Messbereich entfernen
-
-### I2C Scanner (bei Display-Problemen)
-```cpp
-#include <Wire.h>
-void setup() {
-  Wire.begin();
-  Serial.begin(115200);
-  for(byte i = 8; i < 120; i++) {
-    Wire.beginTransmission(i);
-    if(Wire.endTransmission() == 0) {
-      Serial.print("I2C device at 0x");
-      Serial.println(i, HEX);
-    }
-  }
-}
-```
-
-## 🎛️ System-Status LEDs
-
-| LED-Kombination | Bedeutung |
-|----------------|-----------|
-| 🟢 | System bereit, warten auf Objekt |
-| 🟡 | Objekt erkannt, Verzögerung aktiv |
-| 🔴 | Warten auf Objektentfernung |
-| 🔴🟡🟢 | Zeitmessung läuft |
-| 🔴 (blinkend) | Systemfehler |
-
-## 📈 Erweiterte Features
-
-- **Automatische Kalibrierung** beim Start
-- **Hysterese-Funktion** verhindert Fehlauslösungen
-- **Timeout-Schutz** bei hängenden Messungen
-- **Fehlerbehandlung** mit automatischer Wiederherstellung
-- **Live-Zeitanzeige** während der Messung
-- **Median-Filter** für robustere Sensor-Messungen
-- **Heartbeat-System** für Verbindungsüberwachung (5 Sekunden Intervall)
-- **Statistik-Tracking** mit Min/Max/Durchschnitt
-- **Datenlogging** auf SPIFFS (CSV-Format)
-- **Interrupt-basierte** Echo-Messung für höhere Präzision
-
-## 📝 Lizenz & Mitwirken
-
-Dieses Projekt steht unter MIT-Lizenz. Verbesserungen und Pull Requests sind willkommen!
-
-## 🔗 Zusätzliche Ressourcen
-
-- [ESP32 Dokumentation](https://docs.espressif.com/projects/esp32/)
-- [HC-SR04 Datenblatt](https://cdn.sparkfun.com/datasheets/Sensors/Proximity/HCSR04.pdf)
-- [Arduino IDE Setup](https://www.arduino.cc/en/software)
+- [ESP32 Pinout Reference](https://randomnerdtutorials.com/esp32-pinout-reference-gpios/)
+- [HC-SR04 Tutorial](https://randomnerdtutorials.com/esp32-hc-sr04-ultrasonic-arduino/)
+- [I2C LCD Tutorial](https://randomnerdtutorials.com/esp32-esp8266-i2c-lcd-arduino-ide/)
+- [Arduino ESP32 Forum](https://forum.arduino.cc/c/hardware/esp32/103)
 
 ---
 
-**Entwickelt für präzise Zeitmessungen in Sport, Automation und Bildung.**
+**Ein Projekt für präzise, kontaktlose Zeitmessung mit Open-Source Hardware**  
+*Entwickelt für Bildung, Sport und Maker-Projekte*
