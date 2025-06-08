@@ -2,7 +2,9 @@
 
 #include <WiFi.h>
 #include <WiFiClient.h>
+#include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+// Alternative: ESP32-LiquidCrystal-I2C oder ESP32LiquidCrystal
 
 // WiFi Client Settings
 const char *ssid_ap = "MeinESP32AP";
@@ -15,8 +17,8 @@ const uint16_t serverPort = 80;
 WiFiClient client;
 
 // Display Settings (HW-61 I2C LCD)
-LiquidCrystal_I2C lcd(0x27, 20, 4); // I2C address 0x27, 20x4 display
-// Falls 0x27 nicht funktioniert, versuchen Sie 0x3F
+LiquidCrystal_I2C lcd(0x3F, 20, 4); // I2C address 0x3F, 20x4 display
+// Häufige Adressen: 0x27, 0x3F, 0x26, 0x20
 
 // Sensor 2 Pins (Geändert um Konflikte zu vermeiden)
 const int trigPin2 = 12; // Geändert von 5
@@ -49,6 +51,7 @@ unsigned long lastMeasuredTime = 0;
 unsigned long lastConnectionAttempt = 0;
 unsigned long displayStartTime = 0;
 const unsigned long DISPLAY_DURATION_MS = 5000; // 5 Sekunden anzeigen
+bool displayAvailable = false;
 
 // Function Prototypes
 float measureDistanceClient(int trigPin, int echoPin);
@@ -57,6 +60,7 @@ bool establishInitialReferenceDistanceClient();
 void updateDisplay(const String &line1, const String &line2 = "", const String &line3 = "", const String &line4 = "");
 void initializeDisplay();
 void handleConnectionLoss();
+void scanI2CDevices();
 
 void setup()
 {
@@ -76,20 +80,103 @@ void setup()
     clientState = WAITING_FOR_CONNECTION;
 }
 
+void scanI2CDevices() {
+    Serial.println("ESP2: Scanne I2C Geräte...");
+    int deviceCount = 0;
+    
+    for (uint8_t address = 1; address < 127; address++) {
+        Wire.beginTransmission(address);
+        uint8_t error = Wire.endTransmission();
+        
+        if (error == 0) {
+            Serial.print("ESP2: I2C Gerät gefunden bei Adresse 0x");
+            if (address < 16) Serial.print("0");
+            Serial.println(address, HEX);
+            deviceCount++;
+        }
+    }
+    
+    if (deviceCount == 0) {
+        Serial.println("ESP2: Keine I2C Geräte gefunden!");
+    } else {
+        Serial.print("ESP2: ");
+        Serial.print(deviceCount);
+        Serial.println(" I2C Geräte gefunden");
+    }
+}
+
 void initializeDisplay()
 {
-    lcd.init();
-    lcd.backlight();
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Lichtschranke v1.0");
-    lcd.setCursor(0, 1);
-    lcd.print("Warte auf Verbindung");
-    delay(2000);
+    Serial.println("ESP2: Initialisiere Display mit 5V...");
+    Wire.begin(21, 22); // SDA=21, SCL=22
+    Wire.setTimeout(1000); // 1 Sekunde Timeout
+    Wire.setClock(50000); // Noch langsamer: 50kHz für 5V Display
+    
+    delay(500); // Display-Startup Zeit
+    
+    // Scanne I2C Geräte
+    scanI2CDevices();
+    
+    // Teste nur gängige Adressen
+    uint8_t addresses[] = {0x27, 0x3F, 0x20, 0x26};
+    displayAvailable = false;
+    
+    for (int i = 0; i < 4; i++) {
+        Serial.print("ESP2: Teste 5V-Display bei 0x");
+        Serial.println(addresses[i], HEX);
+        
+        Wire.beginTransmission(addresses[i]);
+        uint8_t error = Wire.endTransmission();
+        
+        if (error == 0) {
+            Serial.print("ESP2: 5V-Display gefunden bei 0x");
+            Serial.println(addresses[i], HEX);
+            
+            lcd = LiquidCrystal_I2C(addresses[i], 20, 4);
+            delay(100);
+            lcd.init();
+            delay(100);
+            lcd.backlight();
+            delay(100);
+            
+            // Test schreiben
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("5V Display OK!");
+            lcd.setCursor(0, 1);
+            lcd.print("Lichtschranke v1.0");
+            
+            displayAvailable = true;
+            delay(2000);
+            break;
+        } else {
+            Serial.print("ESP2: Fehler ");
+            Serial.print(error);
+            Serial.print(" bei 0x");
+            Serial.println(addresses[i], HEX);
+        }
+        delay(100);
+    }
+    
+    if (!displayAvailable) {
+        Serial.println("ESP2: Kein 5V-Display gefunden - prüfe Verkabelung:");
+        Serial.println("  VCC -> 5V (nicht 3.3V!)");
+        Serial.println("  GND -> GND");
+        Serial.println("  SDA -> GPIO 21");
+        Serial.println("  SCL -> GPIO 22");
+    } else {
+        Serial.println("ESP2: 5V-Display erfolgreich initialisiert!");
+    }
 }
 
 void updateDisplay(const String &line1, const String &line2, const String &line3, const String &line4)
 {
+    // Nur wenn Display verfügbar ist
+    if (!displayAvailable) {
+        Serial.println("ESP2: " + line1 + (line2.length() > 0 ? " | " + line2 : ""));
+        return;
+    }
+    
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print(line1);
@@ -210,8 +297,10 @@ bool establishInitialReferenceDistanceClient()
         }
 
         // Fortschritt anzeigen
-        lcd.setCursor(0, 3);
-        lcd.print("Sample " + String(i + 1) + "/" + String(REFERENCE_SAMPLES));
+        if (displayAvailable) {
+            lcd.setCursor(0, 3);
+            lcd.print("Sample " + String(i + 1) + "/" + String(REFERENCE_SAMPLES));
+        }
         delay(100);
     }
 
