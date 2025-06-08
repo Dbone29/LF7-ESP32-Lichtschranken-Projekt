@@ -374,6 +374,12 @@ void loop()
             updateDisplay("MESSUNG LAEUFT!", "Zeit: 0.000s",
                           "Warte auf Objekt...", "Ref: " + String(referenceDistance2, 1) + "cm");
         }
+        else if (serverData.equals("START_TIMER") && clientState != IDLE_WAITING_FOR_START)
+        {
+            Serial.println("ESP2: WARNUNG - START_TIMER ignoriert, nicht bereit!");
+            Serial.print("ESP2: Aktueller State: ");
+            Serial.println(clientState);
+        }
     }
 
     // Hauptlogik je nach State

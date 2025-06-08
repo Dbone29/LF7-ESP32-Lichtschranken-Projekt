@@ -43,6 +43,7 @@ enum State
     YELLOW_ON_RED_PENDING,
     RED_ON_WAITING_FOR_OBJECT_LEAVE,
     TIMING_STARTED_ALL_ON,
+    WAITING_FOR_TIMING_COMPLETE,
     ERROR_STATE
 };
 State currentState = SYSTEM_INIT;
@@ -54,9 +55,12 @@ unsigned long objectDetectedTime = 0;
 unsigned long yellowLightOnTime = 0;
 unsigned long timingStartTime = 0;
 unsigned long lastValidMeasurement = 0;
+unsigned long displayStartTime = 0; // Für Cooldown-Timer
 bool clientConnected = false;
 int consecutiveInvalidReadings = 0;
 const int MAX_INVALID_READINGS = 10;
+bool timingInProgress = false;
+const unsigned long MIN_TIME_BETWEEN_MEASUREMENTS_MS = 2000; // 2 Sekunden Mindestabstand
 
 // Function Prototypes
 float measureDistance(int trigPin, int echoPin);
@@ -271,6 +275,7 @@ void resetSystem()
     yellowLightOnTime = 0;
     timingStartTime = 0;
     consecutiveInvalidReadings = 0;
+    timingInProgress = false; // Wichtig: Flag zurücksetzen
     setTrafficLight(false, false, true);
     currentState = IDLE_GREEN;
 }
@@ -284,6 +289,8 @@ void printSystemStatus()
         Serial.print(currentState);
         Serial.print(", Client=");
         Serial.print(clientConnected ? "OK" : "NO");
+        Serial.print(", Timing=");
+        Serial.print(timingInProgress ? "YES" : "NO");
         Serial.print(", Ref=");
         Serial.print(referenceDistance1);
         Serial.println("cm");
@@ -319,7 +326,7 @@ void loop()
     switch (currentState)
     {
     case IDLE_GREEN:
-        if (isValidDistance(currentDistance1) &&
+        if (!timingInProgress && isValidDistance(currentDistance1) &&
             currentDistance1 <= triggerThreshold1)
         {
             Serial.print("ESP1: Objekt erkannt! Distanz: ");
@@ -331,6 +338,16 @@ void loop()
             objectDetectedTime = millis();
             setTrafficLight(false, false, false); // Alle aus
             currentState = OBJECT_DETECTED_YELLOW_PENDING;
+        }
+        else if (timingInProgress)
+        {
+            // Zeitmessung läuft noch - ignoriere neue Objekte
+            static unsigned long lastWarning = 0;
+            if (millis() - lastWarning > 5000) // Warnung alle 5 Sekunden
+            {
+                Serial.println("ESP1: WARNUNG - Zeitmessung läuft noch!");
+                lastWarning = millis();
+            }
         }
         break;
 
@@ -370,6 +387,7 @@ void loop()
                 client.println("START_TIMER");
                 Serial.println("ESP1: START_TIMER gesendet");
                 timingStartTime = millis();
+                timingInProgress = true; // Markiere Timing als aktiv
                 currentState = TIMING_STARTED_ALL_ON;
             }
             else
@@ -390,6 +408,15 @@ void loop()
         // Hauptsächlich Client-Kommunikation
         break;
 
+    case WAITING_FOR_TIMING_COMPLETE:
+        // Cooldown-Phase nach Zeitmessung
+        if (millis() - displayStartTime >= MIN_TIME_BETWEEN_MEASUREMENTS_MS)
+        {
+            resetSystem();
+            Serial.println("ESP1: Bereit für nächste Messung");
+        }
+        break;
+
     case ERROR_STATE:
         // Warte auf manuellen Reset oder versuche automatische Wiederherstellung
         delay(5000);
@@ -397,6 +424,7 @@ void loop()
         if (establishInitialReferenceDistance())
         {
             triggerThreshold1 = referenceDistance1 / 2.0f;
+            timingInProgress = false; // Stelle sicher, dass Flag zurückgesetzt wird
             resetSystem();
         }
         break;
@@ -434,8 +462,13 @@ void handleClientCommunication()
                 Serial.println("ms");
             }
 
-            resetSystem();
-            Serial.println("ESP1: Bereit für nächste Messung");
+            timingInProgress = false; // Timing beendet
+            currentState = WAITING_FOR_TIMING_COMPLETE;
+            displayStartTime = millis(); // Für Cooldown-Timer
+            
+            // Zeige Ergebnis für 2 Sekunden
+            setTrafficLight(false, true, false); // Nur Gelb
+            Serial.println("ESP1: Cooldown-Phase gestartet");
         }
         else if (clientData.startsWith("CLIENT_READY"))
         {
