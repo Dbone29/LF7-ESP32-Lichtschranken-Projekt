@@ -43,6 +43,10 @@ enum StateClient
 };
 StateClient clientState = WAITING_FOR_CONNECTION;
 
+// Heartbeat
+unsigned long lastHeartbeatReceived = 0;
+const unsigned long HEARTBEAT_TIMEOUT_MS = 15000; // 15 Sekunden Timeout
+
 // Variables
 float referenceDistance2 = -1.0f;
 float triggerThreshold2 = -1.0f;
@@ -267,6 +271,7 @@ void connectToWiFiAndServer()
 
             client.println("CLIENT_READY");
             clientState = IDLE_WAITING_FOR_START;
+            lastHeartbeatReceived = millis(); // Heartbeat Timer starten
             updateDisplay("Bereit!", "Warte auf Start...",
                           "Referenz: " + String(referenceDistance2, 1) + "cm",
                           "Trigger: " + String(triggerThreshold2, 1) + "cm");
@@ -380,6 +385,22 @@ void loop()
             Serial.print("ESP2: Aktueller State: ");
             Serial.println(clientState);
         }
+        else if (serverData.equals("HEARTBEAT"))
+        {
+            lastHeartbeatReceived = millis();
+            client.println("HEARTBEAT_ACK");
+            Serial.println("ESP2: Heartbeat empfangen und bestätigt");
+        }
+    }
+    
+    // Heartbeat Timeout prüfen
+    if (clientState != WAITING_FOR_CONNECTION && 
+        millis() - lastHeartbeatReceived > HEARTBEAT_TIMEOUT_MS)
+    {
+        Serial.println("ESP2: Heartbeat Timeout - Verbindung verloren!");
+        updateDisplay("Heartbeat Timeout!", "Verbindung verloren", "", "");
+        clientState = WAITING_FOR_CONNECTION;
+        client.stop();
     }
 
     // Hauptlogik je nach State

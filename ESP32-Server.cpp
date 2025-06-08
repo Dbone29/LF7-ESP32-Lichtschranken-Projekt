@@ -3,6 +3,8 @@
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <WiFiAP.h>
+#include <esp_task_wdt.h>
+#include <SPIFFS.h>
 
 // WiFi AP Settings
 const char *ssid = "MeinESP32AP";
@@ -61,8 +63,45 @@ int consecutiveInvalidReadings = 0;
 const int MAX_INVALID_READINGS = 10;
 bool timingInProgress = false;
 const unsigned long MIN_TIME_BETWEEN_MEASUREMENTS_MS = 2000; // 2 Sekunden Mindestabstand
+const unsigned long HEARTBEAT_INTERVAL_MS = 5000; // 5 Sekunden Heartbeat
+unsigned long lastHeartbeatSent = 0;
+unsigned long lastHeartbeatReceived = 0;
+
+// Interrupt-basierte Messung
+volatile bool measurementReady = false;
+volatile unsigned long pulseDuration = 0;
+
+// Statistik-Tracking
+struct Statistics {
+    unsigned long totalMeasurements = 0;
+    unsigned long successfulMeasurements = 0;
+    float minTime = 999999;
+    float maxTime = 0;
+    float avgTime = 0;
+    unsigned long lastResetTime = 0;
+    
+    void addMeasurement(float time) {
+        totalMeasurements++;
+        if (time > 0) {
+            successfulMeasurements++;
+            minTime = min(minTime, time);
+            maxTime = max(maxTime, time);
+            avgTime = (avgTime * (successfulMeasurements - 1) + time) / successfulMeasurements;
+        }
+    }
+    
+    String toJSON() {
+        return String("{\"total\":") + totalMeasurements + 
+               ",\"success\":" + successfulMeasurements +
+               ",\"min\":" + minTime +
+               ",\"max\":" + maxTime +
+               ",\"avg\":" + avgTime + "}";
+    }
+};
+Statistics stats;
 
 // Function Prototypes
+void IRAM_ATTR echoISR();
 float measureDistance(int trigPin, int echoPin);
 void setTrafficLight(bool red, bool yellow, bool green);
 void handleClientCommunication();
@@ -72,11 +111,21 @@ void resetSystem();
 bool isValidDistance(float distance);
 void updateClientStatus();
 void printSystemStatus();
+float measureDistanceWithMedianFilter(int trigPin, int echoPin, int samples = 5);
+void logMeasurement(unsigned long time);
+void initSPIFFS();
 
 void setup()
 {
     Serial.begin(115200);
     delay(100);
+
+    // Watchdog Timer initialisieren (10 Sekunden)
+    esp_task_wdt_init(10, true);
+    esp_task_wdt_add(NULL);
+
+    // SPIFFS initialisieren
+    initSPIFFS();
 
     // Pin Setup
     pinMode(trigPin1, OUTPUT);
@@ -84,6 +133,9 @@ void setup()
     pinMode(rledPin, OUTPUT);
     pinMode(yledPin, OUTPUT);
     pinMode(gledPin, OUTPUT);
+
+    // Interrupt für Echo-Pin
+    attachInterrupt(digitalPinToInterrupt(echoPin1), echoISR, CHANGE);
 
     // Initial LED test
     Serial.println("\nESP1: LED Test...");
@@ -133,6 +185,7 @@ void setup()
     setTrafficLight(false, false, true); // Start mit Grün
     currentState = IDLE_GREEN;
     lastValidMeasurement = millis();
+    stats.lastResetTime = millis();
 }
 
 bool establishInitialReferenceDistance()
@@ -145,7 +198,7 @@ bool establishInitialReferenceDistance()
 
     for (int i = 0; i < REFERENCE_SAMPLES; i++)
     {
-        float dist = measureDistance(trigPin1, echoPin1);
+        float dist = measureDistanceWithMedianFilter(trigPin1, echoPin1);
         if (isValidDistance(dist))
         {
             totalDist += dist;
@@ -300,10 +353,13 @@ void printSystemStatus()
 
 void loop()
 {
+    // Watchdog zurücksetzen
+    esp_task_wdt_reset();
+    
     updateClientStatus();
     printSystemStatus();
 
-    float currentDistance1 = measureDistance(trigPin1, echoPin1);
+    float currentDistance1 = measureDistanceWithMedianFilter(trigPin1, echoPin1);
 
     // Überwache Sensor-Gesundheit
     if (!isValidDistance(currentDistance1))
@@ -462,6 +518,13 @@ void handleClientCommunication()
                 Serial.println("ms");
             }
 
+            // Zeit in Statistik aufnehmen
+            unsigned long measuredTime = timeValue.toInt();
+            stats.addMeasurement(measuredTime / 1000.0);
+            
+            // Messung in SPIFFS loggen
+            logMeasurement(measuredTime);
+            
             timingInProgress = false; // Timing beendet
             currentState = WAITING_FOR_TIMING_COMPLETE;
             displayStartTime = millis(); // Für Cooldown-Timer
@@ -469,10 +532,16 @@ void handleClientCommunication()
             // Zeige Ergebnis für 2 Sekunden
             setTrafficLight(false, true, false); // Nur Gelb
             Serial.println("ESP1: Cooldown-Phase gestartet");
+            Serial.print("ESP1: Statistik - ");
+            Serial.println(stats.toJSON());
         }
         else if (clientData.startsWith("CLIENT_READY"))
         {
             Serial.println("ESP1: Client bereit");
+        }
+        else if (clientData.startsWith("HEARTBEAT_ACK"))
+        {
+            lastHeartbeatReceived = millis();
         }
         else
         {
@@ -480,4 +549,91 @@ void handleClientCommunication()
             Serial.println(clientData);
         }
     }
+    
+    // Heartbeat senden
+    if (clientConnected && millis() - lastHeartbeatSent > HEARTBEAT_INTERVAL_MS)
+    {
+        client.println("HEARTBEAT");
+        lastHeartbeatSent = millis();
+        Serial.println("ESP1: Heartbeat gesendet");
+    }
+}
+
+// Interrupt Service Routine für Echo-Pin
+void IRAM_ATTR echoISR() {
+    static unsigned long startTime = 0;
+    if (digitalRead(echoPin1)) {
+        startTime = micros();
+    } else {
+        pulseDuration = micros() - startTime;
+        measurementReady = true;
+    }
+}
+
+// Median-Filter für robustere Messungen
+float measureDistanceWithMedianFilter(int trigPin, int echoPin, int samples) {
+    float measurements[samples];
+    
+    for (int i = 0; i < samples; i++) {
+        measurements[i] = measureDistance(trigPin, echoPin);
+        if (measurements[i] < 0) {
+            measurements[i] = MAX_VALID_DISTANCE + 1; // Ungültige Werte ans Ende sortieren
+        }
+        delayMicroseconds(500);
+    }
+    
+    // Bubble Sort für Median
+    for (int i = 0; i < samples - 1; i++) {
+        for (int j = 0; j < samples - i - 1; j++) {
+            if (measurements[j] > measurements[j + 1]) {
+                float temp = measurements[j];
+                measurements[j] = measurements[j + 1];
+                measurements[j + 1] = temp;
+            }
+        }
+    }
+    
+    // Median zurückgeben
+    float median = measurements[samples / 2];
+    return (median > MAX_VALID_DISTANCE) ? -1.0f : median;
+}
+
+// SPIFFS initialisieren
+void initSPIFFS() {
+    if (!SPIFFS.begin(true)) {
+        Serial.println("ESP1: SPIFFS Mount fehlgeschlagen");
+        return;
+    }
+    
+    Serial.println("ESP1: SPIFFS erfolgreich gemountet");
+    
+    // Alte Logs löschen wenn zu groß
+    File file = SPIFFS.open("/measurements.csv");
+    if (file && file.size() > 100000) { // 100KB Limit
+        file.close();
+        SPIFFS.remove("/measurements.csv");
+        Serial.println("ESP1: Alte Logs gelöscht");
+    } else if (file) {
+        file.close();
+    }
+}
+
+// Messung in SPIFFS loggen
+void logMeasurement(unsigned long time) {
+    File file = SPIFFS.open("/measurements.csv", FILE_APPEND);
+    if (!file) {
+        Serial.println("ESP1: Fehler beim Öffnen der Log-Datei");
+        return;
+    }
+    
+    // Format: Timestamp, Messzeit(ms), Client-Status, Referenzdistanz
+    file.printf("%lu,%lu,%s,%.2f\n", 
+        millis(), 
+        time, 
+        clientConnected ? "OK" : "NO_CLIENT",
+        referenceDistance1
+    );
+    
+    file.close();
+    Serial.println("ESP1: Messung geloggt");
 }

@@ -80,10 +80,12 @@ Installieren Sie folgende Libraries über den Arduino IDE Library Manager:
 #include <WiFiClient.h>
 #include <LiquidCrystal_I2C.h>  // by Frank de Brabander
 
-// Für ESP32 #1 (Server)
+// Für ESP32 #1 (Server) - Erweitert
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <WiFiAP.h>
+#include <esp_task_wdt.h>  // Watchdog Timer
+#include <SPIFFS.h>        // Datenlogging
 ```
 
 ## ⚙️ Installation & Setup
@@ -189,6 +191,12 @@ void setup() {
 - **Timeout-Schutz** bei hängenden Messungen
 - **Fehlerbehandlung** mit automatischer Wiederherstellung
 - **Live-Zeitanzeige** während der Messung
+- **Watchdog Timer** verhindert System-Hänger (10 Sekunden)
+- **Median-Filter** für robustere Sensor-Messungen
+- **Heartbeat-System** für Verbindungsüberwachung (5 Sekunden Intervall)
+- **Statistik-Tracking** mit Min/Max/Durchschnitt
+- **Datenlogging** auf SPIFFS (CSV-Format)
+- **Interrupt-basierte** Echo-Messung für höhere Präzision
 
 ## 📝 Lizenz & Mitwirken
 
